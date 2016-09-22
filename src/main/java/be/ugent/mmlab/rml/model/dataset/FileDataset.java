@@ -4,6 +4,8 @@ import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.OutputStream;
+
 import org.openrdf.model.Resource;
 import org.openrdf.model.Statement;
 import org.openrdf.model.URI;
@@ -19,6 +21,8 @@ import org.openrdf.repository.sail.config.SailRepositoryConfig;
 import org.openrdf.rio.RDFHandlerException;
 import org.openrdf.rio.RDFWriter;
 import org.openrdf.rio.Rio;
+import org.openrdf.sail.memory.MemoryStore;
+import org.openrdf.sail.memory.config.MemoryStoreConfig;
 import org.openrdf.sail.nativerdf.NativeStore;
 import org.openrdf.sail.nativerdf.config.NativeStoreConfig;
 import org.slf4j.Logger;
@@ -37,6 +41,8 @@ public class FileDataset extends StdRMLDataset {
             FileDataset.class.getSimpleName());
     
     private File target;
+
+	private OutputStream outputStream;
         
     public FileDataset(String target) {
         try {
@@ -47,7 +53,7 @@ public class FileDataset extends StdRMLDataset {
             String property = "java.io.tmpdir";
             String tempDir = System.getProperty(property) + "/RML-Processor";
             log.debug("OS current temporary directory is " + tempDir); 
-            repository = new SailRepository(new NativeStore(new File(tempDir), indexes));
+            repository = new SailRepository(new MemoryStore(new File(tempDir)));
             repository.initialize();
 
         } catch (RepositoryException ex) {
@@ -71,7 +77,7 @@ public class FileDataset extends StdRMLDataset {
             //TODO: Move that to super
             String indexes = "spoc";
             SailRepositoryConfig repositoryTypeSpec = 
-                    new SailRepositoryConfig(new NativeStoreConfig(indexes));
+                    new SailRepositoryConfig(new MemoryStoreConfig(false));
             RepositoryConfig repConfig = 
                     new RepositoryConfig(repositoryID, repositoryTypeSpec);
             manager.addRepositoryConfig(repConfig);
@@ -94,7 +100,46 @@ public class FileDataset extends StdRMLDataset {
         }
 
     }
-    
+    /**
+    *
+    * @param target
+    * @param outputFormat
+    * @param manager
+    * @param repositoryID
+    */
+   public FileDataset(OutputStream outputStream, String outputFormat, 
+          LocalRepositoryManager manager, String repositoryID) {
+       //Set the final output
+       this.target = null;
+       this.outputStream = outputStream;
+
+       try {
+           //TODO: Move that to super
+           String indexes = "spoc";
+           SailRepositoryConfig repositoryTypeSpec = 
+                   new SailRepositoryConfig(new MemoryStoreConfig(false));
+           RepositoryConfig repConfig = 
+                   new RepositoryConfig(repositoryID, repositoryTypeSpec);
+           manager.addRepositoryConfig(repConfig);
+           repository = manager.getRepository(repositoryID);
+           if(!repository.isInitialized())
+               repository.initialize();
+
+           //Clean up repo from previous use
+           RepositoryConnection con = repository.getConnection();
+           con.clear();
+           con.commit();
+           con.close();
+           
+           this.format = selectFormat(outputFormat);
+           
+       } catch (RepositoryException ex) {
+           log.error("Repository Exception " + ex);
+       } catch (RepositoryConfigException ex) {
+           log.error("Repository Config Exception " + ex);
+       }
+
+   }
     @Override
     public void add(Resource s, URI p, Value o, Resource... contexts) {
         log.debug("Add triple (" + s.stringValue()
@@ -128,17 +173,19 @@ public class FileDataset extends StdRMLDataset {
         try {
             RepositoryConnection con = repository.getConnection();
             RDFWriter writer;
-
+            OutputStream output = null;
             //Prepare writer
-            if(this.target.exists()){
+            if(this.target != null && this.target.exists()){
                 this.target.delete();
                 this.target.createNewFile();
-            }
+            
 
             //Prepare file output stream
-            FileOutputStream output = 
+            output = 
                     new FileOutputStream(this.target);
-
+            }else{
+            	output = this.outputStream;
+            }
             writer = Rio.createWriter(this.format, output);
             con.export(writer);
             con.commit();
